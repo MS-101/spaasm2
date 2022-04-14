@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <unistd.h>
-#include <limits.h>
-#include <sys/wait.h>
 #include <string.h>
+#include <limits.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 char *shell_input() {
     char *input = NULL;
@@ -75,7 +77,7 @@ int shell_execute(char **args) {
 void shell_loop() {
     char *input;
     char **args;
-    int status;
+    int status = 1;
 
     time_t rawtime = time(0);
     struct tm *timeInfo;
@@ -100,8 +102,101 @@ void shell_loop() {
     }
 }
 
-int main() {
-    shell_loop();
+void run_client(char *ip_address, int port) {
+    int client_socket;
+    char server_response[100];
+
+    client_socket = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in server_address;
+    server_address.sin_family = AF_INET;
+    server_address.sin_port = htons(port);
+    server_address.sin_addr.s_addr = inet_addr(ip_address);
+
+    connect(client_socket, (struct sockaddr *) &server_address, sizeof(server_address));
+    printf("Client connected to server!\n");
+
+    recv(client_socket, &server_response, sizeof(server_response), 0);
+    printf("Client received message from server: %s\n", server_response);
+
+    close(client_socket);
+}
+
+void run_server(int port) {
+    int server_socket;
+    char server_message[100] = "You have reached the server!";
+
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+
+    struct sockaddr_in server_address;
+    server_address.sin_family = AF_INET;
+    server_address.sin_port = htons(port);
+    server_address.sin_addr.s_addr = INADDR_ANY;
+
+    bind(server_socket, (struct sockaddr*) &server_address, sizeof(server_address));
+    listen(server_socket, 1);
+    printf("Server listening for clients...\n");
+
+    int client_socket;
+    client_socket = accept(server_socket, NULL, NULL);
+
+    send(client_socket, server_message, sizeof(server_message), 0);
+    printf("Server responded to client...\n");
+
+    close(server_socket);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc == 1) {
+        shell_loop();
+    } else {
+        if (strcmp(argv[1], "-c") == 0) {
+            printf("client detected\n");
+
+            int port = 10666;
+            char ip_address[32] = "127.0.0.1";
+            for (int i = 2; i < argc; i++) {
+                if (strcmp(argv[i], "-p") == 0) {
+                    if (i + 1 >= argc) {
+                        printf("PORT NUMBER IS MISSING!");
+                        return 0;
+                    }
+
+                    port = atoi(argv[i+1]);
+                    if (port == 0) {
+                        printf("PORT NUMBER IS INCORRECT!");
+                        return 0;
+                    }
+
+                    i++;
+                }
+            }
+
+            run_client(ip_address, port);
+        } else if (strcmp(argv[1], "-s") == 0) {
+            printf("server detected\n");
+
+            int port = 10666;
+            for (int i = 2; i < argc; i++) {
+                if (strcmp(argv[i], "-p") == 0) {
+                    if (i + 1 >= argc) {
+                        printf("PORT NUMBER IS MISSING!");
+                        return 0;
+                    }
+
+                    port = atoi(argv[i+1]);
+                    if (port == 0) {
+                        printf("PORT NUMBER IS INCORRECT!");
+                        return 0;
+                    }
+
+                    i++;
+                }
+            }
+
+            run_server(port);
+        }
+    }
 
     return 0;
 }
