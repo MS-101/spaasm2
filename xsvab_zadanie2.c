@@ -46,26 +46,40 @@ char **shell_args(char * input) {
 int shell_run(char **args) {
     int pid, wpid, status;
 
-    pid = fork();
+    int pipes[2];
 
+    pipe(pipes);
+    int read_pipe = pipes[0];
+    int write_pipe = pipes[1];
+
+    pid = fork();
     if (pid < 0) {
         // error
-        return 1;
+        return 0;
     } else if (pid == 0) {
         // child
+        close(read_pipe);
+        dup2(write_pipe, 1);
+        close(write_pipe);
+
+        //execl("/bin/ls", "ls", "-l", (char *)NULL);
         int exec_status = execvp(args[0], args);
 
         if (exec_status == -1) {
             return 1;
         }
+
+        return 0;
     } else {
         // parent
+        close(write_pipe);
+
         do {
             wpid = waitpid(pid, &status, WUNTRACED);
         } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-    }
 
-    return 1;
+        return read_pipe;
+    }
 }
 
 int shell_execute(char **args) {
@@ -98,20 +112,30 @@ char *shell_prompt() {
     return prompt;
 }
 
+void print_data(int data) {
+    char output_buffer[100];
+
+    while (read(data, output_buffer, sizeof(output_buffer)) > 0) {
+        printf("%s", output_buffer);
+    }
+}
+
 void shell_loop() {
     char *prompt;
     char *input;
     char **args;
-    int status = 1;
+    int data;
 
-    while(status) {
+    while(1 == 1) {
         prompt = shell_prompt();
 
         printf("%s ", prompt);
 
         input = shell_input();
         args = shell_args(input);
-        status = shell_execute(args);
+        data = shell_execute(args);
+
+        print_data(data);
 
         free(prompt);
         free(input);
@@ -121,7 +145,9 @@ void shell_loop() {
 
 void run_client(char *ip_address, int port) {
     int client_socket;
+    char client_message[100];
     char server_response[100];
+    int data;
 
     client_socket = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -133,15 +159,28 @@ void run_client(char *ip_address, int port) {
     connect(client_socket, (struct sockaddr *) &server_address, sizeof(server_address));
     printf("Client connected to server!\n");
 
-    recv(client_socket, &server_response, sizeof(server_response), 0);
-    printf("Client received message from server: %s\n", server_response);
+    while (1 == 1) {
+        recv(client_socket, &server_response, sizeof(server_response), 0);
+        printf("%s ", server_response); // prompt
+
+        char *input = shell_input();
+        strcpy(client_message, input);
+        send(client_socket, client_message, sizeof(client_message), 0);
+
+        recv(client_socket, &data, sizeof(data), 0);
+        printf("%d\n", data);
+        print_data(data);
+
+        free(input);
+    }
 
     close(client_socket);
 }
 
 void run_server(int port) {
     int server_socket;
-    char server_message[100] = "You have reached the server!";
+    char server_message[100];
+    char client_response[100];
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -156,9 +195,26 @@ void run_server(int port) {
 
     int client_socket;
     client_socket = accept(server_socket, NULL, NULL);
+    printf("Server accepted client connection.\n");
 
-    send(client_socket, server_message, sizeof(server_message), 0);
-    printf("Server responded to client...\n");
+    while (1 == 1) {
+        char *prompt = shell_prompt();
+        strcpy(server_message, prompt);
+        send(client_socket, server_message, sizeof(server_message), 0);
+        printf("Server sent shell prompt to client.\n");
+
+        recv(client_socket, &client_response, sizeof(client_response), 0);
+        char **args = shell_args(client_response);
+        int data = shell_execute(args);
+
+        printf("%d\n", data);
+        print_data(data);
+        send(client_socket, &data, sizeof(data), 0);
+        printf("Server sent output to client.\n");
+
+        free(prompt);
+        free(args);
+    }
 
     close(server_socket);
 }
@@ -168,8 +224,6 @@ int main(int argc, char *argv[]) {
         shell_loop();
     } else {
         if (strcmp(argv[1], "-c") == 0) {
-            printf("client detected\n");
-
             int port = 10666;
             char ip_address[32] = "127.0.0.1";
             for (int i = 2; i < argc; i++) {
@@ -200,8 +254,6 @@ int main(int argc, char *argv[]) {
 
             run_client(ip_address, port);
         } else if (strcmp(argv[1], "-s") == 0) {
-            printf("server detected\n");
-
             int port = 10666;
             for (int i = 2; i < argc; i++) {
                 if (strcmp(argv[i], "-p") == 0) {
