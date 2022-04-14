@@ -74,10 +74,8 @@ int shell_execute(char **args) {
     return shell_run(args);
 }
 
-void shell_loop() {
-    char *input;
-    char **args;
-    int status = 1;
+char *shell_prompt() {
+    char *prompt = malloc(20 * sizeof(char));
 
     time_t rawtime = time(0);
     struct tm *timeInfo;
@@ -85,18 +83,37 @@ void shell_loop() {
     char hostname[HOST_NAME_MAX + 1];
     char username[LOGIN_NAME_MAX + 1];
 
-    while(status) {
-        timeInfo = localtime( &rawtime );
-        strftime(timeBuffer, sizeof timeBuffer,"%I:%M", timeInfo);
-        gethostname(hostname, HOST_NAME_MAX + 1);
-        getlogin_r(username, LOGIN_NAME_MAX + 1);
+    timeInfo = localtime( &rawtime );
+    strftime(timeBuffer, sizeof timeBuffer,"%I:%M", timeInfo);
+    gethostname(hostname, HOST_NAME_MAX + 1);
+    getlogin_r(username, LOGIN_NAME_MAX + 1);
 
-        printf("%s %s@%s# ", timeBuffer, username, hostname);
+    strcat(prompt, timeBuffer);
+    strcat(prompt, " ");
+    strcat(prompt, username);
+    strcat(prompt, "@");
+    strcat(prompt, hostname);
+    strcat(prompt, "#");
+
+    return prompt;
+}
+
+void shell_loop() {
+    char *prompt;
+    char *input;
+    char **args;
+    int status = 1;
+
+    while(status) {
+        prompt = shell_prompt();
+
+        printf("%s ", prompt);
 
         input = shell_input();
         args = shell_args(input);
         status = shell_execute(args);
 
+        free(prompt);
         free(input);
         free(args);
     }
@@ -169,6 +186,15 @@ int main(int argc, char *argv[]) {
                     }
 
                     i++;
+                }
+
+                if (strcmp(argv[i], "-i") == 0) {
+                    if (i + 1 >= argc) {
+                        printf("IP ADDRESS IS MISSING!");
+                        return 0;
+                    }
+
+                    strcpy(ip_address, argv[i+1]);
                 }
             }
 
