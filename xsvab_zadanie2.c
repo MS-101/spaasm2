@@ -112,12 +112,39 @@ char *shell_prompt() {
     return prompt;
 }
 
-void print_data(int data) {
-    char output_buffer[100];
+#define DEFAULT_DATA_STRUCT_SIZE 100 
 
-    while (read(data, output_buffer, sizeof(output_buffer)) > 0) {
-        printf("%s", output_buffer);
+struct data_struct {
+    int buffers_size;
+    int buffers_count;
+    char (*buffers)[100];
+};
+
+void print_data(struct data_struct my_data_struct) {
+    for (int i = 0; i < my_data_struct.buffers_count; i++) {
+        printf("%s", my_data_struct.buffers[i]);
     }
+}
+
+struct data_struct process_data(int data) {
+    struct data_struct my_data_struct;
+
+    my_data_struct.buffers_size = DEFAULT_DATA_STRUCT_SIZE;
+    my_data_struct.buffers_count = 0;
+    my_data_struct.buffers = malloc(DEFAULT_DATA_STRUCT_SIZE * sizeof(*my_data_struct.buffers));
+
+    char output_buffer[100];
+    while (read(data, output_buffer, sizeof(output_buffer)) > 0) {
+        if (my_data_struct.buffers_count >= my_data_struct.buffers_size) {
+            my_data_struct.buffers_size += DEFAULT_DATA_STRUCT_SIZE;
+            my_data_struct.buffers = realloc(my_data_struct.buffers, my_data_struct.buffers_size * sizeof(*my_data_struct.buffers));
+        }
+
+        strcpy(my_data_struct.buffers[my_data_struct.buffers_count], output_buffer);
+        my_data_struct.buffers_count++;
+    }
+
+    return my_data_struct;
 }
 
 void shell_loop() {
@@ -135,7 +162,9 @@ void shell_loop() {
         args = shell_args(input);
         data = shell_execute(args);
 
-        print_data(data);
+        struct data_struct my_data_struct = process_data(data);
+        print_data(my_data_struct);
+        free(my_data_struct.buffers);
 
         free(prompt);
         free(input);
@@ -147,7 +176,6 @@ void run_client(char *ip_address, int port) {
     int client_socket;
     char client_message[100];
     char server_response[100];
-    int data;
 
     client_socket = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -167,9 +195,12 @@ void run_client(char *ip_address, int port) {
         strcpy(client_message, input);
         send(client_socket, client_message, sizeof(client_message), 0);
 
-        recv(client_socket, &data, sizeof(data), 0);
-        printf("%d\n", data);
-        print_data(data);
+        int buffer_count;
+        recv(client_socket, &buffer_count, sizeof(buffer_count), 0);
+        for (int i = 0; i < buffer_count; i++) {
+            recv(client_socket, &server_response, sizeof(server_response), 0);
+            printf("%s ", server_response);
+        }
 
         free(input);
     }
@@ -207,10 +238,19 @@ void run_server(int port) {
         char **args = shell_args(client_response);
         int data = shell_execute(args);
 
-        printf("%d\n", data);
-        print_data(data);
-        send(client_socket, &data, sizeof(data), 0);
-        printf("Server sent output to client.\n");
+        struct data_struct my_data_struct = process_data(data);
+
+        printf("Server is sending output to client...\n");
+
+        int buffer_count = my_data_struct.buffers_count;
+
+        send(client_socket, &buffer_count, sizeof(buffer_count), 0);
+        for (int i = 0; i < buffer_count; i++) {
+            strcpy(server_message, my_data_struct.buffers[i]);
+            send(client_socket, &server_message, sizeof(server_message), 0);
+        }
+
+        printf("Server finished sending output to client.\n");
 
         free(prompt);
         free(args);
