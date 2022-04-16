@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <stdbool.h>
 #include <string.h>
 #include <limits.h>
 #include <unistd.h>
@@ -25,7 +26,7 @@ char **shell_args(char * input) {
     char *arg;
 
     int arg_index = 0;
-    arg = strtok(input, " \n");
+    arg = strtok(input, " ");
     while (arg != NULL) {
         args[arg_index] = arg;
         arg_index++;
@@ -35,7 +36,7 @@ char **shell_args(char * input) {
             args = realloc(args, arg_count / sizeof(char *));
         }
 
-        arg = strtok(NULL, " \n");
+        arg = strtok(NULL, " ");
     }
 
     args[arg_index] = NULL;
@@ -43,7 +44,7 @@ char **shell_args(char * input) {
     return args;
 }
 
-int shell_run(char **args) {
+FILE *shell_run(char **args) {
     int pid, wpid, status;
 
     int pipes[2];
@@ -58,31 +59,26 @@ int shell_run(char **args) {
         return 0;
     } else if (pid == 0) {
         // child
-        close(read_pipe);
         dup2(write_pipe, 1);
+        close(read_pipe);
         close(write_pipe);
 
-        //execl("/bin/ls", "ls", "-l", (char *)NULL);
         int exec_status = execvp(args[0], args);
-
         if (exec_status == -1) {
-            return 1;
+            return NULL;
         }
 
-        return 0;
+        return NULL;
     } else {
         // parent
         close(write_pipe);
+        wait(NULL);
 
-        do {
-            wpid = waitpid(pid, &status, WUNTRACED);
-        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-
-        return read_pipe;
+       return fdopen(read_pipe, "r");
     }
 }
 
-int shell_execute(char **args) {
+FILE *shell_execute(char **args) {
     // implement built-in functions here
 
     return shell_run(args);
@@ -124,9 +120,11 @@ void print_data(struct data_struct my_data_struct) {
     for (int i = 0; i < my_data_struct.buffers_count; i++) {
         printf("%s", my_data_struct.buffers[i]);
     }
+
+    printf("\n");
 }
 
-struct data_struct process_data(int data) {
+struct data_struct process_data(FILE *data_file) {
     struct data_struct my_data_struct;
 
     my_data_struct.buffers_size = DEFAULT_DATA_STRUCT_SIZE;
@@ -134,7 +132,7 @@ struct data_struct process_data(int data) {
     my_data_struct.buffers = malloc(DEFAULT_DATA_STRUCT_SIZE * sizeof(*my_data_struct.buffers));
 
     char output_buffer[100];
-    while (read(data, output_buffer, sizeof(output_buffer)) > 0) {
+    while (fgets(output_buffer, sizeof(output_buffer), data_file)) {
         if (my_data_struct.buffers_count >= my_data_struct.buffers_size) {
             my_data_struct.buffers_size += DEFAULT_DATA_STRUCT_SIZE;
             my_data_struct.buffers = realloc(my_data_struct.buffers, my_data_struct.buffers_size * sizeof(*my_data_struct.buffers));
@@ -147,11 +145,219 @@ struct data_struct process_data(int data) {
     return my_data_struct;
 }
 
+#define DEFAULT_INPUT_SIZE 100
+
+// removes redundant spaces and newline at the end of the input
+void format_input(char *input) {
+    bool is_start = true;
+    bool found_space = false;
+    int cur_input_size = 0;
+
+    int tmp_input_size = DEFAULT_INPUT_SIZE;
+    char *tmp_input = malloc(DEFAULT_INPUT_SIZE * sizeof(char));
+
+    for (int i = 0; input[i]; i++) {
+        if ((is_start && input[i] == ' ') || (found_space && input[i] == ' ')) {
+            continue;
+        }
+
+        if (input[i] == '\n') {
+            tmp_input = realloc(tmp_input, (cur_input_size+1) * sizeof(char)); 
+            tmp_input[cur_input_size] = '\0';
+
+            strcpy(input, tmp_input);
+            free(tmp_input);
+
+            break;
+        }
+
+        if (input[i] == ' ') {
+            found_space = true;
+            continue;
+        }
+
+        if (found_space) {
+            if (tmp_input_size < cur_input_size + 2) {
+                tmp_input_size += DEFAULT_INPUT_SIZE;
+                tmp_input = realloc(tmp_input, tmp_input_size * sizeof(char));
+            }
+
+            tmp_input[cur_input_size] = ' ';
+            tmp_input[cur_input_size + 1] = input[i];
+            cur_input_size += 2;
+            found_space = false;
+            continue;
+        }
+
+        if (tmp_input_size < cur_input_size + 1) {
+            tmp_input_size += DEFAULT_INPUT_SIZE;
+            tmp_input = realloc(tmp_input, tmp_input_size * sizeof(char));
+        }
+
+        tmp_input[cur_input_size] = input[i];
+        cur_input_size++;
+        is_start = false;
+    }
+}
+
+void remove_comment(char *input) {
+    bool found_backslash = false;
+
+    for (int i = 0; input[i]; i++) {
+        if (!found_backslash && (input[i] == '\\')) {
+            found_backslash = true;
+        } else {
+            found_backslash = false;
+        }
+
+        if (!found_backslash && input[i] == '#') {
+            input = realloc(input, (i+1) * sizeof(char));
+            input[i] = '\0';
+        }
+    }
+}
+
+struct command_struct {
+    int commands_size;
+    int commands_count;
+    char **commands;
+};
+
+struct pipe_struct {
+    int commands_count;
+
+    int *pipe_size;
+    int *pipe_count;
+
+    char ***commands;
+};
+
+#define DEFAULT_PIPE_STRUCT_SIZE 32
+#define DEFAULT_PIPE_SIZE 100
+struct pipe_struct split_pipes(struct command_struct my_command_struct) {
+    struct pipe_struct my_pipe_struct;
+
+    my_pipe_struct.commands_count = my_command_struct.commands_count;
+    my_pipe_struct.commands = malloc(my_pipe_struct.commands_count * sizeof(char**));
+    my_pipe_struct.pipe_size = malloc(my_pipe_struct.commands_count * sizeof(int));
+    my_pipe_struct.pipe_count = malloc(my_pipe_struct.commands_count * sizeof(int));
+
+    for (int i = 0; i < my_command_struct.commands_count; i++) {
+        my_pipe_struct.pipe_count[i] = 0;
+        my_pipe_struct.pipe_size[i] = DEFAULT_PIPE_STRUCT_SIZE;
+        my_pipe_struct.commands[i] = malloc(my_command_struct.commands_size * sizeof(char *));
+
+        int new_pipe_index = 0;
+        int new_pipe_size = DEFAULT_PIPE_SIZE;
+        char *new_pipe = malloc(my_pipe_struct.pipe_size[i] * sizeof(char *));
+
+        bool found_backslash = false;
+
+        for (int j = 0; my_command_struct.commands[i][j]; j++) {
+            if (!found_backslash && (my_command_struct.commands[i][j] == '|')) {
+                new_pipe[new_pipe_index] = '\0';
+
+                my_pipe_struct.commands[i][my_pipe_struct.pipe_count[i]] = new_pipe;
+                my_pipe_struct.pipe_count[i]++;
+
+                if (my_pipe_struct.pipe_count[i] >= my_pipe_struct.pipe_size[i]) {
+                    my_pipe_struct.pipe_size[i] += DEFAULT_PIPE_SIZE;
+                    my_pipe_struct.commands[i] = realloc(my_pipe_struct.commands[i], my_pipe_struct.pipe_size[i] * sizeof(char *));
+                }
+
+                new_pipe_size = DEFAULT_PIPE_SIZE;
+                new_pipe = malloc(new_pipe_size * sizeof(char));
+                new_pipe_index = 0;
+
+                continue;
+            }
+
+            if (new_pipe_index+1 >= new_pipe_size) {
+                new_pipe_size += DEFAULT_PIPE_SIZE;
+                new_pipe = realloc(new_pipe, new_pipe_size * sizeof(char));
+            }
+
+            new_pipe[new_pipe_index] = my_command_struct.commands[i][j];
+            new_pipe_index++;
+
+            if (!found_backslash && (my_command_struct.commands[i][j] == '\\')) {
+                found_backslash = true;
+            } else {
+                found_backslash = false;
+            }
+        }
+
+        if (new_pipe_index > 0) {
+            new_pipe[new_pipe_index] = '\0';
+            my_pipe_struct.commands[i][my_pipe_struct.pipe_count[i]] = new_pipe;
+            my_pipe_struct.pipe_count[i]++;
+        }
+    }
+
+    return my_pipe_struct;
+}
+
+#define DEFAULT_COMMANDS_STRUCT_SIZE 32
+#define DEFAULT_COMMAND_SIZE 100
+struct command_struct split_commands(char *input) {
+    struct command_struct my_command_struct;
+
+    my_command_struct.commands_count = 0;
+    my_command_struct.commands_size = DEFAULT_COMMANDS_STRUCT_SIZE;
+    my_command_struct.commands = malloc(my_command_struct.commands_size * sizeof(char *));
+
+    bool found_backslash = false;
+    int new_cmd_index = 0;
+    int new_cmd_size = DEFAULT_COMMAND_SIZE;
+    char *new_cmd = malloc(new_cmd_size * sizeof(char));
+    for (int i = 0; input[i]; i++) {
+        if (!found_backslash && (input[i] == ';')) {
+            new_cmd[new_cmd_index] = '\0';
+
+            my_command_struct.commands[my_command_struct.commands_count] = new_cmd;
+            my_command_struct.commands_count++;
+
+            if (my_command_struct.commands_count >= my_command_struct.commands_size) {
+                my_command_struct.commands_size += DEFAULT_COMMANDS_STRUCT_SIZE;
+                my_command_struct.commands = realloc(my_command_struct.commands, my_command_struct.commands_size);
+            }
+
+            new_cmd_size = DEFAULT_COMMAND_SIZE;
+            new_cmd = malloc(new_cmd_size * sizeof(char));
+            new_cmd_index = 0;
+
+            continue;
+        }
+
+        if (new_cmd_index+1 >= new_cmd_size) {
+            new_cmd_size += DEFAULT_COMMAND_SIZE;
+            new_cmd = realloc(new_cmd, new_cmd_size * sizeof(char));
+        }
+
+        new_cmd[new_cmd_index] = input[i];
+        new_cmd_index++;
+
+        if (!found_backslash && (input[i] == '\\')) {
+            found_backslash = true;
+        } else {
+            found_backslash = false;
+        }
+    }
+
+    if (new_cmd_index > 0) {
+        new_cmd[new_cmd_index] = '\0';
+        my_command_struct.commands[my_command_struct.commands_count] = new_cmd;
+        my_command_struct.commands_count++;
+    }
+
+    return my_command_struct;
+}
+
 void shell_loop() {
     char *prompt;
     char *input;
     char **args;
-    int data;
+    FILE *data_file;
 
     while(1 == 1) {
         prompt = shell_prompt();
@@ -159,10 +365,37 @@ void shell_loop() {
         printf("%s ", prompt);
 
         input = shell_input();
-        args = shell_args(input);
-        data = shell_execute(args);
 
-        struct data_struct my_data_struct = process_data(data);
+        printf("INITIAL INPUT: %s\n", input);
+        format_input(input);
+        printf("INPUT AFTER FORMATING: %s\n", input);
+        remove_comment(input);
+        printf("INPUT AFTER REMOVING COMMENT: %s\n", input);
+        struct command_struct my_command_struct = split_commands(input);
+
+        printf("INPUT AFTER SEPARATING COMMANDS:\n");
+        for (int i = 0; i < my_command_struct.commands_count; i++) {
+            printf("Command %d: %s\n", i, my_command_struct.commands[i]);
+        }
+
+        struct pipe_struct my_pipe_struct = split_pipes(my_command_struct);
+        printf("INPUT AFTER SEPARATING PIPES:\n");
+        for (int i = 0; i < my_pipe_struct.commands_count; i++) {
+            printf("Command %d:\n", i);
+
+            for (int j = 0; j < my_pipe_struct.pipe_count[i]; j++) {
+                printf("pipe %d: %s\n", j, my_pipe_struct.commands[i][j]);
+            }
+        }
+
+        printf("INPUT AFTER PROCESSING REDIRECTIONS:\n");
+
+        return;
+
+        args = shell_args(input);
+        data_file = shell_execute(args);
+
+        struct data_struct my_data_struct = process_data(data_file);
         print_data(my_data_struct);
         free(my_data_struct.buffers);
 
@@ -236,9 +469,9 @@ void run_server(int port) {
 
         recv(client_socket, &client_response, sizeof(client_response), 0);
         char **args = shell_args(client_response);
-        int data = shell_execute(args);
+        FILE *data_file = shell_execute(args);
 
-        struct data_struct my_data_struct = process_data(data);
+        struct data_struct my_data_struct = process_data(data_file);
 
         printf("Server is sending output to client...\n");
 
