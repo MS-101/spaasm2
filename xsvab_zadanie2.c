@@ -530,8 +530,12 @@ void run_client(char *ip_address, int port) {
     server_address.sin_port = htons(port);
     server_address.sin_addr.s_addr = inet_addr(ip_address);
 
-    connect(client_socket, (struct sockaddr *) &server_address, sizeof(server_address));
-    printf("Client connected to server!\n");
+    if (connect(client_socket, (struct sockaddr *) &server_address, sizeof(server_address)) == 0) {
+        printf("Client connected to server!\n");
+    } else {
+        printf("Server unreachable!");
+        return;
+    }
 
     while (1 == 1) {
         recv(client_socket, &server_response, sizeof(server_response), 0);
@@ -540,18 +544,26 @@ void run_client(char *ip_address, int port) {
         char *input = shell_input();
         strcpy(client_message, input);
         send(client_socket, client_message, sizeof(client_message), 0);
-
-        int buffer_count;
-        recv(client_socket, &buffer_count, sizeof(buffer_count), 0);
-        for (int i = 0; i < buffer_count; i++) {
-            recv(client_socket, &server_response, sizeof(server_response), 0);
-            printf("%s ", server_response);
-        }
-
         free(input);
-    }
 
-    close(client_socket);
+        int commands_count;
+        recv(client_socket, &commands_count, sizeof(commands_count), 0);
+
+        for (int i = 0; i < commands_count; i++) {
+            int buffer_count;
+            recv(client_socket, &buffer_count, sizeof(buffer_count), 0);
+
+            if (buffer_count == -1) {
+                close(client_socket);
+                return;
+            }
+
+            for (int j = 0; j < buffer_count; j++) {
+                recv(client_socket, &server_response, sizeof(server_response), 0);
+                printf("%s", server_response);
+            }
+        }
+    }
 }
 
 void run_server(int port) {
@@ -573,6 +585,7 @@ void run_server(int port) {
     int client_socket;
     client_socket = accept(server_socket, NULL, NULL);
     printf("Server accepted client connection.\n");
+    printf("===============================================\n");
 
     while (1 == 1) {
         char *prompt = shell_prompt();
@@ -581,39 +594,63 @@ void run_server(int port) {
         printf("Server sent shell prompt to client.\n");
 
         recv(client_socket, &client_response, sizeof(client_response), 0);
-        char **args = shell_args(client_response);
-        FILE *data_file = NULL; //shell_execute(args)
+        printf("Server received command from client\n");
+        struct final_input_struct my_final_input_struct = format_input(client_response);
 
-        struct data_struct my_data_struct = process_data(data_file);
+        for (int i = 0; i < my_final_input_struct.commands_count; i++) {
+            int commands_count = my_final_input_struct.commands_count;
+            send(client_socket, &commands_count, sizeof(commands_count), 0);
+            printf("Server sent command count to client\n");
 
-        printf("Server is sending output to client...\n");
+            FILE *data_file;
+            for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
+                FILE *stdin_redirection = NULL;
+                if (my_final_input_struct.stdin_redirection[i][j] != NULL) {
+                    stdin_redirection = fopen(my_final_input_struct.stdin_redirection[i][j], "r");
+                }
 
-        int buffer_count = my_data_struct.buffers_count;
+                FILE *stdout_redirection = NULL;
+                if (my_final_input_struct.stdout_redirection[i][j] != NULL) {
+                    stdout_redirection = fopen(my_final_input_struct.stdout_redirection[i][j], "w");  
+                }
 
-        send(client_socket, &buffer_count, sizeof(buffer_count), 0);
-        for (int i = 0; i < buffer_count; i++) {
-            strcpy(server_message, my_data_struct.buffers[i]);
-            send(client_socket, &server_message, sizeof(server_message), 0);
+                if (stdin_redirection != NULL) {
+                    data_file = shell_execute(my_final_input_struct, i, j, stdin_redirection, stdout_redirection);
+                } else {
+                    data_file = shell_execute(my_final_input_struct, i, j, data_file, stdout_redirection);
+                }
+            }
+
+            struct data_struct my_data_struct = process_data(data_file);
+
+            int buffer_count = my_data_struct.buffers_count;
+            send(client_socket, &buffer_count, sizeof(buffer_count), 0);
+            printf("Server sent buffer count to client\n");
+
+            if (buffer_count == -1) {
+                close(client_socket);
+                return;
+            }
+
+            printf("Server is sending commands to client\n");
+            for (int i = 0; i < buffer_count; i++) {
+                strcpy(server_message, my_data_struct.buffers[i]);
+                send(client_socket, &server_message, sizeof(server_message), 0);
+            }
+            printf("Server sent all commands to client\n");
+
+            free(my_data_struct.buffers);
+
+            printf("===============================================\n");
         }
 
-        printf("Server finished sending output to client.\n");
-
         free(prompt);
-        free(args);
     }
 
     close(server_socket);
 }
 
 int main(int argc, char *argv[]) {
-    /*
-    char *arg_list[] = {"grep", "\"test\"", "test1", NULL};
-    for (int i = 0; arg_list[i] != NULL; i++) {
-        printf("arg_list[%d] = %s\n", i, arg_list[i]);
-    }
-    execvp(arg_list[0], arg_list);
-    */
-
     if (argc == 1) {
         shell_loop();
     } else {
