@@ -74,6 +74,43 @@ char **shell_args(char * input) {
     return args;
 }
 
+void help() {
+    printf("This program was made by Martin Svab.\n");
+    printf("\n");
+
+    printf("How to run this program:\n");
+    printf("\"./xsvab_zadanie2.o -c -i ipAddress -p portNumber\" - run client and connect to server\n");
+    printf("\"./xsvab_zadanie2.o -s -p portNumber\" - run server and respond to clients\n");
+    printf("\"./xsvab_zadanie2.o -h\" - prints this message\n");
+    printf("\n");
+
+    printf("Internal commands:\n");
+    printf("help - prints this message\n");
+    printf("halt - disconnects client from server (only possible when running client)\n");
+    printf("quit - turns off server (only possible when running server)\n");
+    printf("\n");
+
+    printf("Examples of shell usage:\n");
+    printf("ls -l\n");
+    printf("ls > output_file\n");
+    printf("grep test_string < input_file\n");
+    printf("ls | grep test_string\n");
+    printf("whoami # this will be  ignored\n");
+    printf("\n");
+
+    printf("Bonus assignments:\n");
+    printf("TO DO\n");
+    printf("\n");
+}
+
+void halt() {
+
+}
+
+void quit() {
+
+}
+
 FILE *shell_execute(struct final_input_struct my_final_input_struct, int command_number, int pipe_number, FILE *input_fd, FILE *output_fd) {
     int pid, wpid, status;
 
@@ -103,6 +140,14 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
         if (input_fd != NULL) {
             dup2(fileno(input_fd), 0);
             close(fileno(input_fd));
+        }
+
+        if (strcmp(cmd_args[0], "help") == 0) {
+            help();
+        } else if (strcmp(cmd_args[0], "halt")) {
+            halt();
+        } else if (strcmp(cmd_args[0], "quit")) {
+            quit();
         }
 
         int exec_status = execvp(cmd_args[0], cmd_args);
@@ -195,8 +240,10 @@ void remove_comment(char *input) {
     for (int i = 0; input[i]; i++) {
         if (!found_backslash && (input[i] == '\\')) {
             found_backslash = true;
+            continue;
         } else {
             found_backslash = false;
+            continue;
         }
 
         if (!found_backslash && input[i] == '#') {
@@ -704,6 +751,10 @@ int main(int argc, char *argv[]) {
             }
 
             run_server(port);
+        } else if (strcmp(argv[1], "-h") == 0) {
+            help();
+
+            return 0;
         }
     }
 
