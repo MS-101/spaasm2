@@ -14,6 +14,30 @@
 #define DEFAULT_COMMAND_SIZE 100
 #define DEFAULT_PIPE_STRUCT_SIZE 32
 #define DEFAULT_PIPE_SIZE 100
+#define DEFAULT_INPUT_SIZE 100
+
+struct command_struct {
+    int commands_size;
+    int commands_count;
+    char **commands;
+};
+
+struct pipe_struct {
+    int commands_count;
+
+    int *pipe_size;
+    int *pipe_count;
+
+    char ***commands;
+};
+
+struct final_input_struct {
+    int commands_count;
+    int *pipe_count;
+    char ***commands;
+    char ***stdin_redirection;
+    char ***stdout_redirection;
+};
 
 char *shell_input() {
     char *input = NULL;
@@ -50,7 +74,7 @@ char **shell_args(char * input) {
     return args;
 }
 
-FILE *shell_run(char **args) {
+FILE *shell_execute(struct final_input_struct my_final_input_struct, int command_number, int pipe_number, FILE *input_fd, FILE *output_fd) {
     int pid, wpid, status;
 
     int pipes[2];
@@ -65,11 +89,13 @@ FILE *shell_run(char **args) {
         return 0;
     } else if (pid == 0) {
         // child
+        char **cmd_args = shell_args(my_final_input_struct.commands[command_number][pipe_number]);
+
         dup2(write_pipe, 1);
         close(read_pipe);
         close(write_pipe);
 
-        int exec_status = execvp(args[0], args);
+        int exec_status = execvp(cmd_args[0], cmd_args);
         if (exec_status == -1) {
             return NULL;
         }
@@ -77,6 +103,10 @@ FILE *shell_run(char **args) {
         return NULL;
     } else {
         // parent
+
+        /*if (input_fd == NULL) {
+            dup2(read_pipe, fileno(input_fd));
+        }*/
         close(write_pipe);
         wait(NULL);
 
@@ -84,11 +114,13 @@ FILE *shell_run(char **args) {
     }
 }
 
+/*
 FILE *shell_execute(char **args) {
     // implement built-in functions here
 
     return shell_run(args);
 }
+*/
 
 char *shell_prompt() {
     char *prompt = malloc(20 * sizeof(char));
@@ -149,61 +181,6 @@ struct data_struct process_data(FILE *data_file) {
     return my_data_struct;
 }
 
-#define DEFAULT_INPUT_SIZE 100
-
-// removes redundant spaces and newline at the end of the input
-void format_input(char *input) {
-    bool is_start = true;
-    bool found_space = false;
-    int cur_input_size = 0;
-
-    int tmp_input_size = DEFAULT_INPUT_SIZE;
-    char *tmp_input = malloc(DEFAULT_INPUT_SIZE * sizeof(char));
-
-    for (int i = 0; input[i]; i++) {
-        if ((is_start && input[i] == ' ') || (found_space && input[i] == ' ')) {
-            continue;
-        }
-
-        if (input[i] == '\n') {
-            tmp_input = realloc(tmp_input, (cur_input_size+1) * sizeof(char)); 
-            tmp_input[cur_input_size] = '\0';
-
-            strcpy(input, tmp_input);
-            free(tmp_input);
-
-            break;
-        }
-
-        if (input[i] == ' ') {
-            found_space = true;
-            continue;
-        }
-
-        if (found_space) {
-            if (tmp_input_size < cur_input_size + 2) {
-                tmp_input_size += DEFAULT_INPUT_SIZE;
-                tmp_input = realloc(tmp_input, tmp_input_size * sizeof(char));
-            }
-
-            tmp_input[cur_input_size] = ' ';
-            tmp_input[cur_input_size + 1] = input[i];
-            cur_input_size += 2;
-            found_space = false;
-            continue;
-        }
-
-        if (tmp_input_size < cur_input_size + 1) {
-            tmp_input_size += DEFAULT_INPUT_SIZE;
-            tmp_input = realloc(tmp_input, tmp_input_size * sizeof(char));
-        }
-
-        tmp_input[cur_input_size] = input[i];
-        cur_input_size++;
-        is_start = false;
-    }
-}
-
 void remove_comment(char *input) {
     bool found_backslash = false;
 
@@ -221,29 +198,6 @@ void remove_comment(char *input) {
     }
 }
 
-struct command_struct {
-    int commands_size;
-    int commands_count;
-    char **commands;
-};
-
-struct pipe_struct {
-    int commands_count;
-
-    int *pipe_size;
-    int *pipe_count;
-
-    char ***commands;
-};
-
-struct final_input_struct {
-    int commands_count;
-    int *pipe_count;
-    char ***commands;
-    char ***stdin_redirection;
-    char ***stdout_redirection;
-};
-
 struct final_input_struct process_redirections(struct pipe_struct my_pipe_struct) {
     struct final_input_struct my_final_input_struct;
 
@@ -254,7 +208,6 @@ struct final_input_struct process_redirections(struct pipe_struct my_pipe_struct
 
     my_final_input_struct.pipe_count = malloc(my_final_input_struct.commands_count * sizeof(int));
     for (int i = 0; i < my_final_input_struct.commands_count; i++) {
-        printf("i = %d\n", i);
         my_final_input_struct.pipe_count[i] = my_pipe_struct.pipe_count[i];
         my_final_input_struct.commands[i] = malloc(my_final_input_struct.pipe_count[i] * sizeof(char *));
         my_final_input_struct.stdin_redirection[i] = malloc(my_final_input_struct.pipe_count[i] * sizeof(char *));
@@ -504,11 +457,65 @@ struct command_struct split_commands(char *input) {
     return my_command_struct;
 }
 
+struct final_input_struct format_input(char *input) {
+    //printf("INITIAL INPUT: %s\n", input);
+
+    remove_comment(input);
+    //printf("INPUT AFTER REMOVING COMMENT: %s\n", input);
+
+    struct command_struct my_command_struct = split_commands(input);
+    /*
+    printf("INPUT AFTER SEPARATING COMMANDS:\n");
+    for (int i = 0; i < my_command_struct.commands_count; i++) {
+        printf("Command %d: %s\n", i, my_command_struct.commands[i]);
+    }
+    */
+
+    struct pipe_struct my_pipe_struct = split_pipes(my_command_struct);
+    /*
+    printf("INPUT AFTER SEPARATING PIPES:\n");
+    for (int i = 0; i < my_pipe_struct.commands_count; i++) {
+        printf("Command %d:\n", i);
+
+        for (int j = 0; j < my_pipe_struct.pipe_count[i]; j++) {
+            printf("pipe %d: %s\n", j, my_pipe_struct.commands[i][j]);
+        }
+    }
+    */
+
+    struct final_input_struct my_final_input_struct = process_redirections(my_pipe_struct);
+
+    /*
+    printf("INPUT AFTER PROCESSING REDIRECTIONS:\n");
+    for (int i = 0; i < my_final_input_struct.commands_count; i++) {
+        printf("Command %d:\n", i);
+
+        for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
+            printf("pipe %d: %s\n", j, my_final_input_struct.commands[i][j]);
+
+            if (my_final_input_struct.stdin_redirection[i][j] != NULL) {
+                printf("input: %s\n", my_final_input_struct.stdin_redirection[i][j]);
+            } else {
+                printf("input: default\n");
+            }
+
+            if (my_final_input_struct.stdout_redirection[i][j] != NULL) {
+                printf("output: %s\n", my_final_input_struct.stdout_redirection[i][j]);
+            } else {
+                printf("output: default\n");
+            }
+        }
+    }
+    */
+
+   return my_final_input_struct;
+}
+
 void shell_loop() {
     char *prompt;
     char *input;
-    char **args;
-    FILE *data_file;
+    //char **args;
+    FILE *data_file = NULL;
 
     while(1 == 1) {
         prompt = shell_prompt();
@@ -517,63 +524,24 @@ void shell_loop() {
 
         input = shell_input();
 
-        printf("INITIAL INPUT: %s\n", input);
-        format_input(input);
-        printf("INPUT AFTER FORMATING: %s\n", input);
-        remove_comment(input);
-        printf("INPUT AFTER REMOVING COMMENT: %s\n", input);
-        struct command_struct my_command_struct = split_commands(input);
+        struct final_input_struct my_final_input_struct = format_input(input);
 
-        printf("INPUT AFTER SEPARATING COMMANDS:\n");
-        for (int i = 0; i < my_command_struct.commands_count; i++) {
-            printf("Command %d: %s\n", i, my_command_struct.commands[i]);
-        }
-
-        struct pipe_struct my_pipe_struct = split_pipes(my_command_struct);
-        printf("INPUT AFTER SEPARATING PIPES:\n");
-        for (int i = 0; i < my_pipe_struct.commands_count; i++) {
-            printf("Command %d:\n", i);
-
-            for (int j = 0; j < my_pipe_struct.pipe_count[i]; j++) {
-                printf("pipe %d: %s\n", j, my_pipe_struct.commands[i][j]);
-            }
-        }
-
-        struct final_input_struct my_final_input_struct = process_redirections(my_pipe_struct);
-
-        printf("INPUT AFTER PROCESSING REDIRECTIONS:\n");
+        //args = shell_args(input);
         for (int i = 0; i < my_final_input_struct.commands_count; i++) {
-            printf("Command %d:\n", i);
-
+            printf("command %d:\n", i);
             for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
-                printf("pipe %d: %s\n", j, my_final_input_struct.commands[i][j]);
-
-                if (my_final_input_struct.stdin_redirection[i][j] != NULL) {
-                    printf("input: %s\n", my_final_input_struct.stdin_redirection[i][j]);
-                } else {
-                    printf("input: default\n");
-                }
-
-                if (my_final_input_struct.stdout_redirection[i][j] != NULL) {
-                    printf("output: %s\n", my_final_input_struct.stdout_redirection[i][j]);
-                } else {
-                    printf("output: default\n");
-                }
+                printf("pipe %d:\n", j);
+                data_file = shell_execute(my_final_input_struct, i, j, data_file, NULL);
             }
+
+            struct data_struct my_data_struct = process_data(data_file);
+            print_data(my_data_struct);
+            free(my_data_struct.buffers);
         }
-
-        return;
-
-        args = shell_args(input);
-        data_file = shell_execute(args);
-
-        struct data_struct my_data_struct = process_data(data_file);
-        print_data(my_data_struct);
-        free(my_data_struct.buffers);
 
         free(prompt);
         free(input);
-        free(args);
+        //free(args);
     }
 }
 
@@ -641,7 +609,7 @@ void run_server(int port) {
 
         recv(client_socket, &client_response, sizeof(client_response), 0);
         char **args = shell_args(client_response);
-        FILE *data_file = shell_execute(args);
+        FILE *data_file = NULL; //shell_execute(args)
 
         struct data_struct my_data_struct = process_data(data_file);
 
