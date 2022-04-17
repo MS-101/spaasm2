@@ -96,14 +96,6 @@ void help() {
     printf("quit - disconect client (only possible when running client)\n");
     printf("\n");
 
-    printf("Examples of shell usage:\n");
-    printf("ls -l\n");
-    printf("ls > output_file\n");
-    printf("grep test_string < input_file\n");
-    printf("ls | grep test_string\n");
-    printf("whoami # this will be  ignored\n");
-    printf("\n");
-
     printf("Bonus assignments:\n");
     printf("Client can specify server ip adress and port, send him input and receive output [3 points]\n");
     printf("\n");
@@ -142,10 +134,10 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
         }
 
         if (strcmp(cmd_args[0], "help") == 0) {
-            help();
-
             strcpy(string_buffer, "help");
             write(write_pipe, string_buffer, 100 * sizeof(char));
+
+            help();
 
             close(write_pipe);
 
