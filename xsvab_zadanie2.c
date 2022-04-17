@@ -91,12 +91,13 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
         // child
         char **cmd_args = shell_args(my_final_input_struct.commands[command_number][pipe_number]);
 
-        for (int i = 0; cmd_args[i] != NULL; i++) {
-            printf("cmd_args[%d] = %s\n", i, cmd_args[i]);
-        }
-
         close(read_pipe);
-        dup2(write_pipe, 1);
+
+        if (output_fd != NULL) {
+            dup2(fileno(output_fd), 1);
+        } else {
+            dup2(write_pipe, 1);
+        }
         close(write_pipe);
 
         if (input_fd != NULL) {
@@ -117,17 +118,17 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
 
         wait(NULL);
 
+        if (input_fd != NULL) {
+            fclose(input_fd);
+        }
+        
+        if (output_fd != NULL) {
+            fclose(output_fd);
+        }
+
        return fdopen(read_pipe, "r");
     }
 }
-
-/*
-FILE *shell_execute(char **args) {
-    // implement built-in functions here
-
-    return shell_run(args);
-}
-*/
 
 char *shell_prompt() {
     char *prompt = malloc(20 * sizeof(char));
@@ -259,14 +260,14 @@ struct final_input_struct process_redirections(struct pipe_struct my_pipe_struct
                         continue;
                     }
 
-                    if (found_first_char && (read_char != ' ')) {
+                    if (found_first_char && (read_char != ' ' && read_char != '\n')) {
                         new_input[input_index] = read_char;
                         input_index++;
 
                         continue;
                     }
 
-                    if (found_first_char && (read_char == ' ')) {
+                    if (found_first_char && (read_char == ' ' || read_char == '\n')) {
                         new_input[input_index] = '\0';
 
                         found_first_char = false;
@@ -287,14 +288,14 @@ struct final_input_struct process_redirections(struct pipe_struct my_pipe_struct
                         continue;
                     }
 
-                    if (found_first_char && (read_char != ' ')) {
+                    if (found_first_char && (read_char != ' ' && read_char != '\n')) {
                         new_output[output_index] = read_char;
                         output_index++;
 
                         continue;
                     }
 
-                    if (found_first_char && (read_char == ' ')) {
+                    if (found_first_char && (read_char == ' ' || read_char == '\n')) {
                         new_output[output_index] = '\0';
 
                         found_first_char = false;
@@ -465,55 +466,10 @@ struct command_struct split_commands(char *input) {
 }
 
 struct final_input_struct format_input(char *input) {
-    //printf("INITIAL INPUT: %s\n", input);
-
     remove_comment(input);
-    //printf("INPUT AFTER REMOVING COMMENT: %s\n", input);
-
     struct command_struct my_command_struct = split_commands(input);
-    /*
-    printf("INPUT AFTER SEPARATING COMMANDS:\n");
-    for (int i = 0; i < my_command_struct.commands_count; i++) {
-        printf("Command %d: %s\n", i, my_command_struct.commands[i]);
-    }
-    */
-
     struct pipe_struct my_pipe_struct = split_pipes(my_command_struct);
-    /*
-    printf("INPUT AFTER SEPARATING PIPES:\n");
-    for (int i = 0; i < my_pipe_struct.commands_count; i++) {
-        printf("Command %d:\n", i);
-
-        for (int j = 0; j < my_pipe_struct.pipe_count[i]; j++) {
-            printf("pipe %d: %s\n", j, my_pipe_struct.commands[i][j]);
-        }
-    }
-    */
-
     struct final_input_struct my_final_input_struct = process_redirections(my_pipe_struct);
-
-    /*
-    printf("INPUT AFTER PROCESSING REDIRECTIONS:\n");
-    for (int i = 0; i < my_final_input_struct.commands_count; i++) {
-        printf("Command %d:\n", i);
-
-        for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
-            printf("pipe %d: %s\n", j, my_final_input_struct.commands[i][j]);
-
-            if (my_final_input_struct.stdin_redirection[i][j] != NULL) {
-                printf("input: %s\n", my_final_input_struct.stdin_redirection[i][j]);
-            } else {
-                printf("input: default\n");
-            }
-
-            if (my_final_input_struct.stdout_redirection[i][j] != NULL) {
-                printf("output: %s\n", my_final_input_struct.stdout_redirection[i][j]);
-            } else {
-                printf("output: default\n");
-            }
-        }
-    }
-    */
 
    return my_final_input_struct;
 }
@@ -521,7 +477,6 @@ struct final_input_struct format_input(char *input) {
 void shell_loop() {
     char *prompt;
     char *input;
-    //char **args;
     FILE *data_file = NULL;
 
     while(1 == 1) {
@@ -535,10 +490,22 @@ void shell_loop() {
 
         //args = shell_args(input);
         for (int i = 0; i < my_final_input_struct.commands_count; i++) {
-            printf("command %d:\n", i);
             for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
-                printf("pipe %d:%s\n", j, my_final_input_struct.commands[i][j]);
-                data_file = shell_execute(my_final_input_struct, i, j, data_file, NULL);
+                FILE *stdin_redirection = NULL;
+                if (my_final_input_struct.stdin_redirection[i][j] != NULL) {
+                    stdin_redirection = fopen(my_final_input_struct.stdin_redirection[i][j], "r");
+                }
+
+                FILE *stdout_redirection = NULL;
+                if (my_final_input_struct.stdout_redirection[i][j] != NULL) {
+                    stdout_redirection = fopen(my_final_input_struct.stdout_redirection[i][j], "w");  
+                }
+
+                if (stdin_redirection != NULL) {
+                    data_file = shell_execute(my_final_input_struct, i, j, stdin_redirection, stdout_redirection);
+                } else {
+                    data_file = shell_execute(my_final_input_struct, i, j, data_file, stdout_redirection);
+                }
             }
 
             struct data_struct my_data_struct = process_data(data_file);
@@ -548,7 +515,6 @@ void shell_loop() {
 
         free(prompt);
         free(input);
-        //free(args);
     }
 }
 

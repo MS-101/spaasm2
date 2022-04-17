@@ -1,7 +1,0 @@
-total 33
--rwxrwxrwx 1 root root    52 Apr 16 20:18 test1
--rwxrwxrwx 1 root root     0 Apr 16 20:17 test2
--rwxrwxrwx 1 root root     0 Apr 16 20:17 test3
--rwxrwxrwx 1 root root     0 Apr 16 20:35 test.txt
--rwxrwxrwx 1 root root  8824 Apr 16 19:36 xsvab_zadanie2.c
--rwxrwxrwx 1 root root 18728 Apr 16 19:36 xsvab_zadanie2.o
