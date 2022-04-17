@@ -91,9 +91,18 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
         // child
         char **cmd_args = shell_args(my_final_input_struct.commands[command_number][pipe_number]);
 
-        dup2(write_pipe, 1);
+        for (int i = 0; cmd_args[i] != NULL; i++) {
+            printf("cmd_args[%d] = %s\n", i, cmd_args[i]);
+        }
+
         close(read_pipe);
+        dup2(write_pipe, 1);
         close(write_pipe);
+
+        if (input_fd != NULL) {
+            dup2(fileno(input_fd), 0);
+            close(fileno(input_fd));
+        }
 
         int exec_status = execvp(cmd_args[0], cmd_args);
         if (exec_status == -1) {
@@ -104,10 +113,8 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
     } else {
         // parent
 
-        /*if (input_fd == NULL) {
-            dup2(read_pipe, fileno(input_fd));
-        }*/
         close(write_pipe);
+
         wait(NULL);
 
        return fdopen(read_pipe, "r");
@@ -530,7 +537,7 @@ void shell_loop() {
         for (int i = 0; i < my_final_input_struct.commands_count; i++) {
             printf("command %d:\n", i);
             for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
-                printf("pipe %d:\n", j);
+                printf("pipe %d:%s\n", j, my_final_input_struct.commands[i][j]);
                 data_file = shell_execute(my_final_input_struct, i, j, data_file, NULL);
             }
 
@@ -633,6 +640,14 @@ void run_server(int port) {
 }
 
 int main(int argc, char *argv[]) {
+    /*
+    char *arg_list[] = {"grep", "\"test\"", "test1", NULL};
+    for (int i = 0; arg_list[i] != NULL; i++) {
+        printf("arg_list[%d] = %s\n", i, arg_list[i]);
+    }
+    execvp(arg_list[0], arg_list);
+    */
+
     if (argc == 1) {
         shell_loop();
     } else {
