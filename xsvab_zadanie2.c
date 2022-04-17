@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <limits.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
@@ -15,6 +16,10 @@
 #define DEFAULT_PIPE_STRUCT_SIZE 32
 #define DEFAULT_PIPE_SIZE 100
 #define DEFAULT_INPUT_SIZE 100
+
+bool server_active = false;
+int server_socket;
+int client_socket;
 
 struct command_struct {
     int commands_size;
@@ -79,6 +84,7 @@ void help() {
     printf("\n");
 
     printf("How to run this program:\n");
+    printf("\"./xsvab_zadanie2.o\" - regular shell without client-server communication\n");
     printf("\"./xsvab_zadanie2.o -c -i ipAddress -p portNumber\" - run client and connect to server\n");
     printf("\"./xsvab_zadanie2.o -s -p portNumber\" - run server and respond to clients\n");
     printf("\"./xsvab_zadanie2.o -h\" - prints this message\n");
@@ -86,8 +92,8 @@ void help() {
 
     printf("Internal commands:\n");
     printf("help - prints this message\n");
-    printf("halt - disconnects client from server (only possible when running client)\n");
-    printf("quit - turns off server (only possible when running server)\n");
+    printf("halt - close server (only possible when running client)\n");
+    printf("quit - disconect client (only possible when running client)\n");
     printf("\n");
 
     printf("Examples of shell usage:\n");
@@ -99,19 +105,11 @@ void help() {
     printf("\n");
 
     printf("Bonus assignments:\n");
-    printf("TO DO\n");
+    printf("Client can specify server ip adress and port, send him input and receive output [3 points]\n");
     printf("\n");
 }
 
-void halt() {
-
-}
-
-void quit() {
-
-}
-
-FILE *shell_execute(struct final_input_struct my_final_input_struct, int command_number, int pipe_number, FILE *input_fd, FILE *output_fd) {
+FILE *shell_execute(struct final_input_struct my_final_input_struct, int command_number, int pipe_number, FILE *input_fd, FILE *output_fd, bool is_server) {
     int pid, wpid, status;
 
     int pipes[2];
@@ -119,6 +117,8 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
     pipe(pipes);
     int read_pipe = pipes[0];
     int write_pipe = pipes[1];
+
+    char string_buffer[100];
 
     pid = fork();
     if (pid < 0) {
@@ -135,7 +135,6 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
         } else {
             dup2(write_pipe, 1);
         }
-        close(write_pipe);
 
         if (input_fd != NULL) {
             dup2(fileno(input_fd), 0);
@@ -144,10 +143,32 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
 
         if (strcmp(cmd_args[0], "help") == 0) {
             help();
-        } else if (strcmp(cmd_args[0], "halt")) {
-            halt();
-        } else if (strcmp(cmd_args[0], "quit")) {
-            quit();
+
+            strcpy(string_buffer, "help");
+            write(write_pipe, string_buffer, 100 * sizeof(char));
+
+            close(write_pipe);
+
+            return NULL;
+        } else if (strcmp(cmd_args[0], "halt") == 0) {
+            strcpy(string_buffer, "halt");
+            write(write_pipe, string_buffer, 100 * sizeof(char));
+
+            close(write_pipe);
+
+            return NULL;
+        } else if (strcmp(cmd_args[0], "quit") == 0) {
+            strcpy(string_buffer, "quit");
+            write(write_pipe, string_buffer, 100 * sizeof(char));
+
+            close(write_pipe);
+
+            return NULL;
+        } else {
+            strcpy(string_buffer, "normal");
+            write(write_pipe, string_buffer, 100 * sizeof(char));
+
+            close(write_pipe);
         }
 
         int exec_status = execvp(cmd_args[0], cmd_args);
@@ -160,6 +181,31 @@ FILE *shell_execute(struct final_input_struct my_final_input_struct, int command
         // parent
 
         close(write_pipe);
+
+        read(read_pipe, string_buffer, 100 * sizeof(char));
+
+        if (strcmp(string_buffer, "halt") == 0) {
+            if (is_server) {
+                if (server_active) {
+                    close(server_socket);
+                    server_active = false;
+
+                    int buffer_count = -1;
+                    send(client_socket, &buffer_count, sizeof(buffer_count), 0);
+                }
+
+                exit(0);
+            }
+        }
+
+        if (strcmp(string_buffer, "quit") == 0) {
+            if (!is_server) {
+                close(server_socket);
+                server_active = false;
+
+                exit(0);
+            }
+        }
 
         wait(NULL);
 
@@ -535,7 +581,6 @@ void shell_loop() {
 
         struct final_input_struct my_final_input_struct = format_input(input);
 
-        //args = shell_args(input);
         for (int i = 0; i < my_final_input_struct.commands_count; i++) {
             for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
                 FILE *stdin_redirection = NULL;
@@ -549,9 +594,9 @@ void shell_loop() {
                 }
 
                 if (stdin_redirection != NULL) {
-                    data_file = shell_execute(my_final_input_struct, i, j, stdin_redirection, stdout_redirection);
+                    data_file = shell_execute(my_final_input_struct, i, j, stdin_redirection, stdout_redirection, true);
                 } else {
-                    data_file = shell_execute(my_final_input_struct, i, j, data_file, stdout_redirection);
+                    data_file = shell_execute(my_final_input_struct, i, j, data_file, stdout_redirection, true);
                 }
             }
 
@@ -614,11 +659,8 @@ void run_client(char *ip_address, int port) {
 }
 
 void run_server(int port) {
-    int server_socket;
     char server_message[100];
     char client_response[100];
-
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
 
     struct sockaddr_in server_address;
     server_address.sin_family = AF_INET;
@@ -629,7 +671,8 @@ void run_server(int port) {
     listen(server_socket, 1);
     printf("Server listening for clients...\n");
 
-    int client_socket;
+    server_active = true;
+
     client_socket = accept(server_socket, NULL, NULL);
     printf("Server accepted client connection.\n");
     printf("===============================================\n");
@@ -647,7 +690,6 @@ void run_server(int port) {
         for (int i = 0; i < my_final_input_struct.commands_count; i++) {
             int commands_count = my_final_input_struct.commands_count;
             send(client_socket, &commands_count, sizeof(commands_count), 0);
-            printf("Server sent command count to client\n");
 
             FILE *data_file;
             for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
@@ -662,9 +704,9 @@ void run_server(int port) {
                 }
 
                 if (stdin_redirection != NULL) {
-                    data_file = shell_execute(my_final_input_struct, i, j, stdin_redirection, stdout_redirection);
+                    data_file = shell_execute(my_final_input_struct, i, j, stdin_redirection, stdout_redirection, false);
                 } else {
-                    data_file = shell_execute(my_final_input_struct, i, j, data_file, stdout_redirection);
+                    data_file = shell_execute(my_final_input_struct, i, j, data_file, stdout_redirection, false);
                 }
             }
 
@@ -673,11 +715,6 @@ void run_server(int port) {
             int buffer_count = my_data_struct.buffers_count;
             send(client_socket, &buffer_count, sizeof(buffer_count), 0);
             printf("Server sent buffer count to client\n");
-
-            if (buffer_count == -1) {
-                close(client_socket);
-                return;
-            }
 
             printf("Server is sending commands to client\n");
             for (int i = 0; i < buffer_count; i++) {
@@ -750,6 +787,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 
+            server_socket = socket(AF_INET, SOCK_STREAM, 0);
             run_server(port);
         } else if (strcmp(argv[1], "-h") == 0) {
             help();
