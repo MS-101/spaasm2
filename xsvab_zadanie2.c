@@ -9,6 +9,12 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+#define DEFAULT_DATA_STRUCT_SIZE 100 
+#define DEFAULT_COMMANDS_STRUCT_SIZE 32
+#define DEFAULT_COMMAND_SIZE 100
+#define DEFAULT_PIPE_STRUCT_SIZE 32
+#define DEFAULT_PIPE_SIZE 100
+
 char *shell_input() {
     char *input = NULL;
     size_t input_size = 0;
@@ -26,7 +32,7 @@ char **shell_args(char * input) {
     char *arg;
 
     int arg_index = 0;
-    arg = strtok(input, " ");
+    arg = strtok(input, " \n");
     while (arg != NULL) {
         args[arg_index] = arg;
         arg_index++;
@@ -36,7 +42,7 @@ char **shell_args(char * input) {
             args = realloc(args, arg_count / sizeof(char *));
         }
 
-        arg = strtok(NULL, " ");
+        arg = strtok(NULL, " \n");
     }
 
     args[arg_index] = NULL;
@@ -107,8 +113,6 @@ char *shell_prompt() {
 
     return prompt;
 }
-
-#define DEFAULT_DATA_STRUCT_SIZE 100 
 
 struct data_struct {
     int buffers_size;
@@ -232,8 +236,157 @@ struct pipe_struct {
     char ***commands;
 };
 
-#define DEFAULT_PIPE_STRUCT_SIZE 32
-#define DEFAULT_PIPE_SIZE 100
+struct final_input_struct {
+    int commands_count;
+    int *pipe_count;
+    char ***commands;
+    char ***stdin_redirection;
+    char ***stdout_redirection;
+};
+
+struct final_input_struct process_redirections(struct pipe_struct my_pipe_struct) {
+    struct final_input_struct my_final_input_struct;
+
+    my_final_input_struct.commands_count = my_pipe_struct.commands_count;
+    my_final_input_struct.commands = malloc(my_final_input_struct.commands_count * sizeof(char **));
+    my_final_input_struct.stdin_redirection = malloc(my_final_input_struct.commands_count * sizeof(char **));
+    my_final_input_struct.stdout_redirection = malloc(my_final_input_struct.commands_count * sizeof(char **));
+
+    my_final_input_struct.pipe_count = malloc(my_final_input_struct.commands_count * sizeof(int));
+    for (int i = 0; i < my_final_input_struct.commands_count; i++) {
+        printf("i = %d\n", i);
+        my_final_input_struct.pipe_count[i] = my_pipe_struct.pipe_count[i];
+        my_final_input_struct.commands[i] = malloc(my_final_input_struct.pipe_count[i] * sizeof(char *));
+        my_final_input_struct.stdin_redirection[i] = malloc(my_final_input_struct.pipe_count[i] * sizeof(char *));
+        my_final_input_struct.stdout_redirection[i] = malloc(my_final_input_struct.pipe_count[i] * sizeof(char *));
+
+        for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
+            int new_cmd_index = 0;
+            int new_cmd_size = DEFAULT_COMMAND_SIZE;
+            char *new_cmd = malloc(new_cmd_size * sizeof(char));
+
+            bool found_backslash = false;
+            bool found_input = false;
+            bool found_output = false;
+            bool found_first_char = false;
+
+            char *new_input = NULL;
+            char *new_output = NULL;
+
+            int input_index = 0;
+            int output_index = 0;
+
+            for (int k = 0; my_pipe_struct.commands[i][j][k]; k++) {
+                char read_char = my_pipe_struct.commands[i][j][k];
+
+                if (!found_backslash && (read_char == '<')) {
+                    found_input = true;
+                    continue;
+                }
+
+                if (!found_backslash && (read_char == '>')) {
+                    found_output = true;
+                    continue;
+                }
+
+                if (found_input) {
+                    if (!found_first_char && (read_char != ' ')) {
+                        found_first_char = true;
+                        new_input = malloc(100 * sizeof(char));
+                        new_input[input_index] = read_char;
+                        input_index++;
+
+                        continue;
+                    }
+
+                    if (found_first_char && (read_char != ' ')) {
+                        new_input[input_index] = read_char;
+                        input_index++;
+
+                        continue;
+                    }
+
+                    if (found_first_char && (read_char == ' ')) {
+                        new_input[input_index] = '\0';
+
+                        found_first_char = false;
+                        found_input = false;
+                        input_index = 0;
+
+                        continue;
+                    }
+                }
+
+                if (found_output) {
+                    if (!found_first_char && (read_char != ' ')) {
+                        found_first_char = true;
+                        new_output = malloc(100 * sizeof(char));
+                        new_output[output_index] = read_char;
+                        output_index++;
+
+                        continue;
+                    }
+
+                    if (found_first_char && (read_char != ' ')) {
+                        new_output[output_index] = read_char;
+                        output_index++;
+
+                        continue;
+                    }
+
+                    if (found_first_char && (read_char == ' ')) {
+                        new_output[output_index] = '\0';
+
+                        found_first_char = false;
+                        found_output = false;
+                        output_index = 0;
+
+                        continue;
+                    }
+                }
+
+                if (new_cmd_index+1 >= new_cmd_size) {
+                    new_cmd_size += DEFAULT_COMMAND_SIZE;
+                    new_cmd = realloc(new_cmd, new_cmd_index * sizeof(char));
+                }
+
+                new_cmd[new_cmd_index] = read_char;
+                new_cmd_index++;
+
+                if (!found_backslash && (my_pipe_struct.commands[i][j][k] == '\\')) {
+                    found_backslash = true;
+                } else {
+                    found_backslash = false;
+                }
+            }
+
+            new_cmd[new_cmd_index] = '\0';
+            my_final_input_struct.commands[i][j] = new_cmd;
+
+            if (found_input) {
+                new_input[input_index] = '\0';
+
+                found_first_char = false;
+                found_input = false;
+                output_index = 0;
+            }
+
+            if (found_input) {
+                new_output[output_index] = '\0';
+
+                found_first_char = false;
+                found_output = false;
+                output_index = 0;
+            }
+
+            my_final_input_struct.stdin_redirection[i][j] = new_input;
+            my_final_input_struct.stdout_redirection[i][j] = new_output;
+        }
+    }
+
+    return my_final_input_struct;
+}
+
 struct pipe_struct split_pipes(struct command_struct my_command_struct) {
     struct pipe_struct my_pipe_struct;
 
@@ -249,7 +402,7 @@ struct pipe_struct split_pipes(struct command_struct my_command_struct) {
 
         int new_pipe_index = 0;
         int new_pipe_size = DEFAULT_PIPE_SIZE;
-        char *new_pipe = malloc(my_pipe_struct.pipe_size[i] * sizeof(char *));
+        char *new_pipe = malloc(new_pipe_size * sizeof(char *));
 
         bool found_backslash = false;
 
@@ -297,8 +450,6 @@ struct pipe_struct split_pipes(struct command_struct my_command_struct) {
     return my_pipe_struct;
 }
 
-#define DEFAULT_COMMANDS_STRUCT_SIZE 32
-#define DEFAULT_COMMAND_SIZE 100
 struct command_struct split_commands(char *input) {
     struct command_struct my_command_struct;
 
@@ -388,7 +539,28 @@ void shell_loop() {
             }
         }
 
+        struct final_input_struct my_final_input_struct = process_redirections(my_pipe_struct);
+
         printf("INPUT AFTER PROCESSING REDIRECTIONS:\n");
+        for (int i = 0; i < my_final_input_struct.commands_count; i++) {
+            printf("Command %d:\n", i);
+
+            for (int j = 0; j < my_final_input_struct.pipe_count[i]; j++) {
+                printf("pipe %d: %s\n", j, my_final_input_struct.commands[i][j]);
+
+                if (my_final_input_struct.stdin_redirection[i][j] != NULL) {
+                    printf("input: %s\n", my_final_input_struct.stdin_redirection[i][j]);
+                } else {
+                    printf("input: default\n");
+                }
+
+                if (my_final_input_struct.stdout_redirection[i][j] != NULL) {
+                    printf("output: %s\n", my_final_input_struct.stdout_redirection[i][j]);
+                } else {
+                    printf("output: default\n");
+                }
+            }
+        }
 
         return;
 
